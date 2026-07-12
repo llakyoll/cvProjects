@@ -1,0 +1,17 @@
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# YOLO auto-downloaded weights (re-fetched on first run, not committed)
+yolov8*.pt
+yolov5*.pt
+yolo11*.pt
+
+# OS
+.DS_Store
+Thumbs.db
