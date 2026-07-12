@@ -4,7 +4,7 @@ Counts vehicles passing through a two-line corridor in a video stream, with a li
 
 ## Demo
 
-<!-- TODO: demo.gif -->
+![demo](assets/demo.gif)
 
 ## Features
 

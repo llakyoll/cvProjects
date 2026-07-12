@@ -12,8 +12,8 @@ Each project lives in its own folder with its own README, requirements, and demo
 
 | Project | Description | Stack | Demo |
 |---|---|---|---|
-| [vehicle-counting](./vehicle-counting) | Counts vehicles crossing a virtual line in video streams, with per-direction totals | YOLO, OpenCV | — |
-| [people-counting](./people-counting) | Real-time people detection and counting with entry/exit zone logic | YOLO, OpenCV | — |
+| [vehicle-counting](./vehicle-counting) | Counts vehicles passing through a two-line corridor in video streams | YOLO, OpenCV | ![demo](./vehicle-counting/assets/demo.gif) |
+| [people-counting](./people-counting) | Real-time people counting through a two-line corridor, entries/exits | YOLO, OpenCV | ![demo](./people-counting/assets/demo.gif) |
 
 ---
 
