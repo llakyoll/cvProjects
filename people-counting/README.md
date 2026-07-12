@@ -1,17 +1,19 @@
 # People Counting
 
-Real-time people detection and counting with entry/exit zone logic.
+Real-time people detection and counting through a two-line corridor.
 
 ## Demo
 
-<!-- TODO: demo.gif -->
+![demo](assets/demo.gif)
 
 ## Features
 
 - Detects people with YOLOv8, restricted to the person class.
 - Tracks each person across frames to avoid double-counting.
-- Counts entries and exits separately for a configurable rectangular zone.
-- Draws the zone and live counts on the output video.
+- Counts a person only once they have crossed both corridor lines in
+  sequence, filtering out people who merely approach and turn away.
+- Counts entries and exits separately.
+- Supports horizontal or vertical corridor lines.
 - Runs on any video file, RTSP stream, or webcam index.
 - Optionally exports an annotated output video.
 
@@ -21,16 +23,16 @@ Real-time people detection and counting with entry/exit zone logic.
 flowchart LR
     A[Video Source] --> B[YOLO Detection]
     B --> C[ByteTrack Tracking]
-    C --> D[Zone Entry/Exit Counter]
+    C --> D[Two-Line Corridor Counter]
     D --> E[Annotated Output / Counts]
 ```
 
 Each frame is run through YOLO detection restricted to the person class,
 then Ultralytics' built-in ByteTrack tracker assigns a stable id to each
-person. The counter checks whether a track's centroid is inside the
-configured rectangular zone and compares that against its state on the
-previous frame to detect an entry or exit, incrementing the count exactly
-once per transition.
+person. The counter tracks each person's progress through two configured
+lines: it only registers a count once a track has crossed the near line
+and then the far line (an entry), or the far line and then the near line
+(an exit). Crossing only one of the two lines does not count.
 
 ## Installation
 
@@ -40,7 +42,7 @@ once per transition.
 ## Usage
 
 ```bash
-python main.py --source rtsp://192.168.1.64/stream2 --zone 200 150 600 450
+python main.py --source rtsp://192.168.1.64/stream2 --line1 320 --line2 400 --orientation horizontal
 ```
 
 | Argument | Description | Default |
@@ -48,7 +50,9 @@ python main.py --source rtsp://192.168.1.64/stream2 --zone 200 150 600 450
 | `--source` | Video file path or RTSP/webcam stream URL | *required* |
 | `--model` | YOLO weights path or name | `yolov8n.pt` |
 | `--conf` | Detection confidence threshold | `0.4` |
-| `--zone` | Rectangular zone as `x1 y1 x2 y2` | `200 150 600 450` |
+| `--line1` | Pixel coordinate of the first corridor line | `320` |
+| `--line2` | Pixel coordinate of the second corridor line | `400` |
+| `--orientation` | `horizontal` or `vertical` | `horizontal` |
 | `--output` | Path to save the annotated output video | `None` (shows a live window) |
 
 ## Project structure
@@ -58,7 +62,7 @@ people-counting/
 ├── main.py             # CLI entry point, video loop
 ├── src/
 │   ├── detector.py      # YOLO detection + tracking wrapper
-│   └── zone_counter.py  # Entry/exit zone counting logic
+│   └── counter.py       # Two-line corridor counting logic
 ├── requirements.txt
 └── assets/
 ```

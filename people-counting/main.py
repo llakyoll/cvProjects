@@ -1,33 +1,45 @@
 """Entry point for the people-counting project.
 
 Reads a video source, runs YOLO detection + tracking on each frame, and
-counts people entering/exiting a rectangular zone.
+counts people that pass through a two-line corridor, split by direction
+(entries/exits).
 """
 
 import argparse
 
 import cv2
 
+from src.counter import CorridorCounter
 from src.detector import PersonDetector
-from src.zone_counter import ZoneCounter
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Count people entering/exiting a zone in a video stream.")
+    parser = argparse.ArgumentParser(description="Count people passing through a two-line corridor in a video stream.")
     parser.add_argument("--source", required=True, help="Video file path or RTSP/webcam stream URL.")
     parser.add_argument("--model", default="yolov8n.pt", help="YOLO weights path or name.")
     parser.add_argument("--conf", type=float, default=0.4, help="Detection confidence threshold.")
-    parser.add_argument("--zone", type=int, nargs=4, metavar=("X1", "Y1", "X2", "Y2"), default=[200, 150, 600, 450],
-                         help="Rectangular entry/exit zone as x1 y1 x2 y2.")
+    parser.add_argument("--line1", type=int, default=320, help="Pixel coordinate of the first corridor line.")
+    parser.add_argument("--line2", type=int, default=400, help="Pixel coordinate of the second corridor line.")
+    parser.add_argument("--orientation", choices=["horizontal", "vertical"], default="horizontal",
+                         help="Corridor line orientation.")
     parser.add_argument("--output", default=None, help="Optional path to save the annotated output video.")
     return parser.parse_args()
+
+
+def draw_corridor(frame, line_near: int, line_far: int, orientation: str) -> None:
+    h, w = frame.shape[:2]
+    for line_position, color in ((line_near, (255, 200, 0)), (line_far, (0, 200, 255))):
+        if orientation == "horizontal":
+            cv2.line(frame, (0, line_position), (w, line_position), color, 2)
+        else:
+            cv2.line(frame, (line_position, 0), (line_position, h), color, 2)
 
 
 def main() -> None:
     args = parse_args()
 
     detector = PersonDetector(model_path=args.model, conf_threshold=args.conf)
-    counter = ZoneCounter(zone=tuple(args.zone))
+    counter = CorridorCounter(line1=args.line1, line2=args.line2, orientation=args.orientation)
 
     cap = cv2.VideoCapture(args.source)
     writer = None
@@ -46,8 +58,7 @@ def main() -> None:
                 counter.update(track_id, centroid)
 
         annotated = results.plot()
-        zx1, zy1, zx2, zy2 = counter.zone
-        cv2.rectangle(annotated, (zx1, zy1), (zx2, zy2), (0, 200, 255), 2)
+        draw_corridor(annotated, counter.line_near, counter.line_far, args.orientation)
         cv2.putText(annotated, f"Entries: {counter.entries}  Exits: {counter.exits}", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
