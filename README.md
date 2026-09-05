@@ -14,6 +14,7 @@ Each project lives in its own folder with its own README, requirements, and demo
 |---|---|---|---|
 | [vehicle-counting](./vehicle-counting) | Counts vehicles passing through a two-line corridor in video streams | YOLO, OpenCV | ![demo](./vehicle-counting/assets/demo.gif) |
 | [people-counting](./people-counting) | Real-time people counting through a two-line corridor, entries/exits | YOLO, OpenCV | ![demo](./people-counting/assets/demo.gif) |
+| [license-plate-ocr](./license-plate-ocr) | Detects and reads license plates from images and streams | YOLOv11 ONNX, FastPlateOCR, OpenCV | — |
 
 ---
 

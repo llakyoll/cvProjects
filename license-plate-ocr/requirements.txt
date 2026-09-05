@@ -1,0 +1,8 @@
+huggingface-hub==1.30.0
+pytest==9.1.1
+ultralytics==8.4.86
+fast-plate-ocr==1.1.0
+onnxruntime-gpu==1.26.0
+
+# NumPy and OpenCV are provided by the cvstack CMake environment.
+# They are intentionally not pinned here to avoid replacing native builds.

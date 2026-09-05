@@ -13,6 +13,13 @@ yolov8*.pt
 yolov5*.pt
 yolo11*.pt
 
+# License plate OCR detector weights (downloaded and hash-verified at runtime)
+license-plate-ocr/models/*.onnx
+
+# Local license plate OCR inputs and generated annotations
+license-plate-ocr/test_video.mp4
+license-plate-ocr/assets/*_annotated.mp4
+
 # OS
 .DS_Store
 Thumbs.db
