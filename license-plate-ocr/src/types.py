@@ -14,3 +14,4 @@ class PlateDetection:
 
     bbox: tuple[int, int, int, int]
     confidence: float
+    track_id: int | None = None

@@ -179,6 +179,7 @@ def run(args: argparse.Namespace) -> None:
         from src.ocr import PlateOCR
         from src.pipeline import PlatePipeline
         from src.plate_detector import PlateDetector
+        from src.track_consensus import TrackConsensusStore
 
         model_path = ensure_detector_model(Path(args.detector_model))
         detector = PlateDetector(
@@ -189,9 +190,10 @@ def run(args: argparse.Namespace) -> None:
         )
         ocr = PlateOCR(model_name=args.ocr_model, device=args.device)
         pipeline = PlatePipeline(detector, ocr)
+        consensus = TrackConsensusStore(max_records=5)
 
         if is_image_source(source):
-            _run_image(cv2, pipeline, source, args.output, args.polygon)
+            _run_image(cv2, pipeline, source, args.output, args.polygon, consensus)
             return
 
         capture = cv2.VideoCapture(source)
@@ -206,8 +208,10 @@ def run(args: argparse.Namespace) -> None:
         display = args.output is None
         while True:
             results = filter_results_by_polygon(pipeline.process_frame(frame), polygon)
-            annotated_scene = annotate_frame(frame.copy(), results, polygon)
-            annotated = compose_plate_panel(frame, results, scene=annotated_scene)
+            records = consensus.update(frame, results)
+            consensus_text = {record.track_id: record.text for record in records}
+            annotated_scene = annotate_frame(frame.copy(), results, polygon, consensus_text)
+            annotated = compose_plate_panel(frame, records, scene=annotated_scene)
             if writer is None and args.output is not None:
                 writer = _create_writer(cv2, args.output, fps, annotated)
             if writer is not None:
@@ -233,6 +237,7 @@ def _run_image(
     source: str,
     output: str | None,
     polygon: Polygon | None,
+    consensus: Any,
 ) -> None:
     """Process and optionally save one still image."""
     frame = cv2.imread(source)
@@ -240,8 +245,10 @@ def _run_image(
         raise RuntimeError(f"Could not read image source: {source}")
     selected_polygon = polygon or select_polygon(cv2, frame)
     results = filter_results_by_polygon(pipeline.process_frame(frame), selected_polygon)
-    annotated_scene = annotate_frame(frame.copy(), results, selected_polygon)
-    annotated = compose_plate_panel(frame, results, scene=annotated_scene)
+    records = consensus.update(frame, results)
+    consensus_text = {record.track_id: record.text for record in records}
+    annotated_scene = annotate_frame(frame.copy(), results, selected_polygon, consensus_text)
+    annotated = compose_plate_panel(frame, records, scene=annotated_scene)
     if output is not None and not cv2.imwrite(output, annotated):
         raise RuntimeError(f"Could not write annotated image: {output}")
     if output is None:

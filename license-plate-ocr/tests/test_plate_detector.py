@@ -10,16 +10,17 @@ from src.types import PlateDetection
 class FakeBoxes:
     """Small stand-in for the Ultralytics boxes container."""
 
-    def __init__(self, xyxy, conf):
+    def __init__(self, xyxy, conf, ids=None):
         self.xyxy = xyxy
         self.conf = conf
+        self.id = ids
 
 
 class FakeResult:
     """Small stand-in for one Ultralytics prediction result."""
 
-    def __init__(self, xyxy, conf):
-        self.boxes = FakeBoxes(xyxy, conf)
+    def __init__(self, xyxy, conf, ids=None):
+        self.boxes = FakeBoxes(xyxy, conf, ids)
 
 
 class FakeModel:
@@ -32,6 +33,24 @@ class FakeModel:
     def predict(self, **kwargs):
         self.calls.append(kwargs)
         return [self.result]
+
+    def track(self, **kwargs):
+        self.calls.append(kwargs)
+        return [self.result]
+
+
+def test_track_converts_box_ids_and_uses_bytetrack():
+    frame = object()
+    model = FakeModel(FakeResult([[1, 2, 30, 40]], [0.9], [7]))
+    detector = PlateDetector(Path("detector.onnx"), model=model)
+
+    detections = detector.track(frame)
+
+    assert detections == [
+        PlateDetection(bbox=(1, 2, 30, 40), confidence=0.9, track_id=7)
+    ]
+    assert model.calls[0]["tracker"] == "bytetrack.yaml"
+    assert model.calls[0]["persist"] is True
 
 
 def test_detect_converts_fake_yolo_boxes_to_plate_detections():

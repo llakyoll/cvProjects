@@ -75,6 +75,25 @@ class PlateDetector:
             device=self._device,
             verbose=False,
         )
+        return self._normalize_results(results)
+
+    def track(self, frame: np.ndarray) -> list[PlateDetection]:
+        """Detect plates and associate them with persistent ByteTrack IDs."""
+        results = self._model.track(
+            source=frame,
+            conf=self._confidence,
+            imgsz=self._image_size,
+            device=self._device,
+            tracker="bytetrack.yaml",
+            persist=True,
+            verbose=False,
+        )
+        return self._normalize_results(results, include_track_ids=True)
+
+    def _normalize_results(
+        self, results: object, include_track_ids: bool = False
+    ) -> list[PlateDetection]:
+        """Normalize backend prediction results at the adapter boundary."""
         if not results:
             return []
 
@@ -85,8 +104,9 @@ class PlateDetector:
 
         coordinates = getattr(boxes, "xyxy", [])
         confidences = getattr(boxes, "conf", [])
+        identifiers = getattr(boxes, "id", None)
         detections: list[PlateDetection] = []
-        for box, confidence in zip(coordinates, confidences):
+        for index, (box, confidence) in enumerate(zip(coordinates, confidences)):
             score = float(confidence)
             if score < self._confidence:
                 continue
@@ -94,6 +114,11 @@ class PlateDetector:
                 PlateDetection(
                     bbox=tuple(int(coordinate) for coordinate in box),
                     confidence=score,
+                    track_id=(
+                        int(identifiers[index])
+                        if include_track_ids and identifiers is not None
+                        else None
+                    ),
                 )
             )
         return detections

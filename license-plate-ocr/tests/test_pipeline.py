@@ -46,6 +46,10 @@ class FakeDetector:
         self.frames.append(frame)
         return self.detections
 
+    def track(self, frame):
+        self.frames.append(frame)
+        return self.detections
+
 
 class FakeOCR:
     """Return controlled readings and record crop batches."""
@@ -136,6 +140,16 @@ def test_pipeline_pairs_ordered_readings_with_detection_metadata():
             region=None,
         ),
     ]
+
+
+def test_pipeline_preserves_tracker_id_in_plate_result():
+    frame = FakeFrame(height=20, width=30)
+    detector = FakeDetector([PlateDetection((2, 3, 10, 9), 0.91, track_id=11)])
+    ocr = FakeOCR([PlateReading(text="ABC123", confidence=0.88, region=None)])
+
+    results = PlatePipeline(detector, ocr).process_frame(frame)
+
+    assert results[0].track_id == 11
 
 
 def test_pipeline_skips_invalid_detections_and_returns_empty_without_valid_crops():

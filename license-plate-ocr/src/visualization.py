@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .pipeline import PlateResult
 
 
-DEFAULT_PANEL_HEIGHT = 160
+DEFAULT_PANEL_HEIGHT = 270
 PANEL_MARGIN = 12
 PANEL_HEADER_HEIGHT = 34
 PANEL_CARD_GAP = 10
@@ -24,6 +24,7 @@ def annotate_frame(
     frame: np.ndarray,
     results: list[PlateResult],
     polygon: tuple[tuple[int, int], ...] | None = None,
+    consensus_text: dict[int, str] | None = None,
 ) -> np.ndarray:
     """Draw plate boxes and confidence labels onto one frame.
 
@@ -56,7 +57,10 @@ def annotate_frame(
             else f"O:{result.ocr_confidence:.2f}"
         )
         region_label = f" [{result.region}]" if result.region else ""
-        label = f"{result.text or 'UNKNOWN'} {detection_label} {ocr_label}{region_label}"
+        track_id = getattr(result, "track_id", None)
+        text = (consensus_text or {}).get(track_id, result.text) if track_id is not None else result.text
+        track_label = f" T#{track_id}" if track_id is not None else ""
+        label = f"{text or 'UNKNOWN'}{track_label} {detection_label} {ocr_label}{region_label}"
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         text_origin = (x1, max(20, y1 - 8))
@@ -114,7 +118,9 @@ def compose_plate_panel(
         panel[:] = PANEL_BACKGROUND
     valid_results = []
     for result in results:
-        crop = _safe_crop(frame, result.bbox)
+        crop = getattr(result, "crop", None)
+        if crop is None:
+            crop = _safe_crop(frame, result.bbox)
         if crop is not None:
             valid_results.append((result, crop))
 
@@ -140,14 +146,16 @@ def compose_plate_panel(
             getattr(cv2, "LINE_AA", 16),
         )
     else:
-        max_cards = max(1, (width - 2 * PANEL_MARGIN + PANEL_CARD_GAP) // (
-            PANEL_MIN_CARD_WIDTH + PANEL_CARD_GAP
-        ))
-        visible_results = valid_results[:max_cards]
+        visible_results = valid_results[:5]
+        columns = min(3, len(visible_results))
+        rows = (len(visible_results) + columns - 1) // columns
         card_width = max(
             1,
-            (width - 2 * PANEL_MARGIN - PANEL_CARD_GAP * (len(visible_results) - 1))
-            // len(visible_results),
+            (width - 2 * PANEL_MARGIN - PANEL_CARD_GAP * (columns - 1)) // columns,
+        )
+        card_height = max(
+            1,
+            (panel_height - PANEL_HEADER_HEIGHT - PANEL_MARGIN - PANEL_CARD_GAP * (rows - 1)) // rows,
         )
         draw_rectangle = getattr(cv2, "rectangle", None)
         cv2.putText(
@@ -172,31 +180,35 @@ def compose_plate_panel(
                 1,
                 getattr(cv2, "LINE_AA", 16),
             )
-        thumbnail_height = max(1, panel_height - PANEL_HEADER_HEIGHT - 2 * PANEL_MARGIN)
+        thumbnail_height = max(1, card_height - 2 * PANEL_MARGIN)
         for index, (result, crop) in enumerate(visible_results, start=1):
-            x = PANEL_MARGIN + (index - 1) * (card_width + PANEL_CARD_GAP)
+            card_index = index - 1
+            x = PANEL_MARGIN + (card_index % columns) * (card_width + PANEL_CARD_GAP)
+            y = PANEL_HEADER_HEIGHT + (card_index // columns) * (card_height + PANEL_CARD_GAP)
             if draw_rectangle is not None:
                 draw_rectangle(
                     panel,
-                    (x, PANEL_HEADER_HEIGHT),
-                    (x + card_width, panel_height - PANEL_MARGIN),
+                    (x, y),
+                    (x + card_width, y + card_height),
                     PANEL_CARD_BACKGROUND,
                     -1,
                 )
             thumbnail_width = min(max(1, card_width // 2), 112)
             thumbnail = _fit_thumbnail(cv2, crop, thumbnail_width, thumbnail_height)
-            thumbnail_y = PANEL_HEADER_HEIGHT + (thumbnail_height - thumbnail.shape[0]) // 2
+            thumbnail_y = y + (card_height - thumbnail.shape[0]) // 2
             panel[
                 thumbnail_y : thumbnail_y + thumbnail.shape[0],
                 x + PANEL_MARGIN : x + PANEL_MARGIN + thumbnail.shape[1],
             ] = thumbnail
             text = result.text or "UNKNOWN"
-            ocr = "n/a" if result.ocr_confidence is None else f"{result.ocr_confidence:.0%}"
+            confidence = getattr(result, "consensus_confidence", result.ocr_confidence)
+            ocr = "n/a" if confidence is None else f"{confidence:.0%}"
             text_x = x + PANEL_MARGIN + thumbnail_width + 8
+            track_id = getattr(result, "track_id", None)
             cv2.putText(
                 panel,
-                f"#{index}",
-                (text_x, PANEL_HEADER_HEIGHT + 24),
+                f"Track #{track_id if track_id is not None else index}",
+                (text_x, y + 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 PANEL_ACCENT,
@@ -206,7 +218,7 @@ def compose_plate_panel(
             cv2.putText(
                 panel,
                 text,
-                (text_x, PANEL_HEADER_HEIGHT + 54),
+                (text_x, y + 44),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.62,
                 (255, 255, 255),
@@ -216,7 +228,7 @@ def compose_plate_panel(
             cv2.putText(
                 panel,
                 f"OCR {ocr}",
-                (text_x, PANEL_HEADER_HEIGHT + 80),
+                (text_x, y + 66),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 (190, 230, 190),
@@ -226,7 +238,7 @@ def compose_plate_panel(
             cv2.putText(
                 panel,
                 f"DET {result.detection_confidence:.0%}",
-                (text_x, PANEL_HEADER_HEIGHT + 104),
+                (text_x, y + 88),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 (210, 210, 210),

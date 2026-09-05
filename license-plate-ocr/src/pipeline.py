@@ -36,6 +36,7 @@ class PlateResult:
     text: str
     ocr_confidence: float | None
     region: str | None
+    track_id: int | None = None
 
 
 def crop_with_padding(
@@ -124,7 +125,7 @@ class PlatePipeline:
             ValueError: If OCR returns a different number of readings than
                 valid crops.
         """
-        detections = self._detector.detect(frame)
+        detections = self._detector.track(frame)
         if not detections:
             return []
 
@@ -154,6 +155,7 @@ class PlatePipeline:
                 text=reading.text,
                 ocr_confidence=reading.confidence,
                 region=reading.region,
+                track_id=detection.track_id,
             )
             for detection, reading in zip(valid_detections, readings, strict=True)
         ]

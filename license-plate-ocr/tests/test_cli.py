@@ -521,7 +521,7 @@ def test_compose_plate_panel_skips_invalid_boxes_and_labels_valid_plate() -> Non
         else:
             sys.modules["numpy"] = previous_numpy
 
-    assert "#1" in calls
+    assert any("#1" in label for label in calls)
     assert "34ABC123" in calls
     assert not any("bad" in label for label in calls)
 
@@ -567,7 +567,7 @@ def test_compose_plate_panel_shows_header_and_overflow_count() -> None:
             text=f"34ABC{index}",
             ocr_confidence=0.8,
         )
-        for index in range(3)
+        for index in range(7)
     ]
     previous_cv2 = sys.modules.get("cv2")
     previous_numpy = sys.modules.get("numpy")

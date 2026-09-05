@@ -16,6 +16,7 @@ No real demo asset is committed yet.
 - Process images, videos, RTSP streams, and numeric webcam sources.
 - Render plate boxes with detector and OCR confidence labels.
 - Show safe plate crops, OCR predictions, and confidence values in a fixed top panel.
+- Track plates with ByteTrack and stabilize OCR text through confidence-weighted voting.
 - Restrict reported plates to an optional polygon ROI, with interactive drawing when omitted.
 - Save annotated image or video output when requested.
 
@@ -30,7 +31,7 @@ flowchart LR
     E --> F[Display or optional annotated output]
 ```
 
-The detector runs first, then each valid plate crop is passed to FastPlateOCR as a batch. The scene is annotated below a fixed 160-pixel panel containing safe, resized plate crops, plate text, and OCR/detector confidence values for the current frame; when the panel cannot fit every card, it reports the remaining count. When no valid result exists, the panel displays `No plates detected`. The detector artifact is downloaded from the pinned Hugging Face revision when it is missing, and the SHA-256 digest is checked before inference. Each frame is processed independently; this MVP does not track identities across frames.
+The detector runs first, then Ultralytics ByteTrack associates each plate with a temporary track ID before valid crops are passed to FastPlateOCR as a batch. Each track accumulates OCR votes weighted by OCR and detector confidence, and the highest total becomes its displayed reading. The scene is annotated below a fixed 270-pixel panel containing the five most recent track records in a three-by-two grid; the card crop belongs to the strongest reading for its winning text. ByteTrack IDs are temporary, so a plate that leaves and later re-enters with a new ID becomes a new record.
 
 ## Installation
 
