@@ -1,6 +1,8 @@
 """Behavioral tests for the YOLO license-plate detector adapter."""
 
 from pathlib import Path
+from contextlib import redirect_stdout
+from io import StringIO
 
 from src import plate_detector
 from src.plate_detector import PlateDetector
@@ -51,6 +53,18 @@ def test_track_converts_box_ids_and_uses_bytetrack():
     ]
     assert model.calls[0]["tracker"] == "bytetrack.yaml"
     assert model.calls[0]["persist"] is True
+
+
+def test_track_debug_prints_raw_confidences_and_ids():
+    model = FakeModel(FakeResult([[1, 2, 30, 40]], [0.42]))
+    detector = PlateDetector(Path("detector.onnx"), model=model, debug=True)
+    output = StringIO()
+
+    with redirect_stdout(output):
+        detector.track(object())
+
+    assert "raw confidences=[0.42]" in output.getvalue()
+    assert "raw ids=None" in output.getvalue()
 
 
 def test_detect_converts_fake_yolo_boxes_to_plate_detections():

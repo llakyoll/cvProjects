@@ -10,28 +10,27 @@ No real demo asset is committed yet.
 
 ## Features
 
-- Detect license plates with a pinned YOLOv11 ONNX detector.
+- Detect license plates with a pinned YOLOv11 PyTorch detector.
 - Download and hash-verify detector weights at runtime.
+- Display smoothed processing FPS alongside the source FPS.
 - Recognize cropped plates with FastPlateOCR in batches.
-- Process images, videos, RTSP streams, and numeric webcam sources.
-- Render plate boxes with detector and OCR confidence labels.
-- Show safe plate crops, OCR predictions, and confidence values in a fixed top panel.
-- Track plates with ByteTrack and stabilize OCR text through confidence-weighted voting.
+- Resolve stable plate identities with ByteTrack plus motion and OCR fallback association.
+- Show five persistent plate crops with confidence-weighted OCR consensus.
 - Restrict reported plates to an optional polygon ROI, with interactive drawing when omitted.
-- Save annotated image or video output when requested.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     A[Image, video, RTSP, or webcam] --> B[OpenCV capture]
-    B --> C[YOLOv11 ONNX plate detection]
-    C --> D[Crop and pad detected plates]
-    D --> E[FastPlateOCR recognition]
-    E --> F[Display or optional annotated output]
+    B --> C[YOLOv11 PyTorch plate detection]
+    C --> D[ByteTrack association]
+    D --> E[Crop and FastPlateOCR recognition]
+    E --> F[Motion and OCR identity fallback]
+    F --> G[Consensus panel and annotated output]
 ```
 
-The detector runs first, then Ultralytics ByteTrack associates each plate with a temporary track ID before valid crops are passed to FastPlateOCR as a batch. Each track accumulates OCR votes weighted by OCR and detector confidence, and the highest total becomes its displayed reading. The scene is annotated below a fixed 270-pixel panel containing the five most recent track records in a three-by-two grid; the card crop belongs to the strongest reading for its winning text. ByteTrack IDs are temporary, so a plate that leaves and later re-enters with a new ID becomes a new record.
+The detector runs first, then Ultralytics ByteTrack attempts to associate each plate before valid crops are passed to FastPlateOCR as a batch. An application-level associator preserves backend IDs when available and resolves missing IDs from predicted center movement, normalized box size, and OCR similarity. Each resolved identity accumulates confidence-weighted OCR votes, and the strongest reading and a large crop appear in a fixed 270-pixel panel containing the five most recent records in one horizontal row. The panel also reports exponentially smoothed end-to-end processing FPS beside the source FPS. Association state expires after 30 missed frames, while recent panel records remain visible.
 
 ## Installation
 
@@ -71,9 +70,9 @@ The detector runs first, then Ultralytics ByteTrack associates each plate with a
    `cvstack` CMake environment, so they are intentionally not pinned here.
    Verify that `import numpy` and `import cv2` work before running the CLI.
 
-4. Provide an NVIDIA GPU with a compatible driver and CUDA-capable runtime. The default detector device is `cuda:0`, and `onnxruntime-gpu` is installed explicitly for GPU OCR execution. FastPlateOCR 1.1.0 accepts `cuda`, `cpu`, or `auto`; the adapter maps an indexed value such as `cuda:0` to `cuda` for OCR while preserving `cuda:0` for the detector. Confirm that the installed ONNX Runtime and Ultralytics backends can access the intended GPU before processing a source.
+4. Provide an NVIDIA GPU with a compatible driver and CUDA-capable PyTorch runtime. The default detector device is `cuda:0`, and `onnxruntime-gpu` is installed explicitly for GPU OCR execution. FastPlateOCR 1.1.0 accepts `cuda`, `cpu`, or `auto`; the adapter maps an indexed value such as `cuda:0` to `cuda` for OCR while preserving `cuda:0` for the detector. Confirm that the installed ONNX Runtime and Ultralytics PyTorch backends can access the intended GPU before processing a source.
 
-The first run needs network access to download the detector into `models/license-plate-finetune-v1l.onnx`. The model file is ignored by Git and is never committed. The application verifies the file against the expected digest both when reusing an existing file and after downloading it; a mismatch stops execution.
+The first run needs network access to download the detector into `models/license-plate-finetune-v1l.pt`. The model file is ignored by Git and is never committed. The application verifies the file against the expected digest both when reusing an existing file and after downloading it; a mismatch stops execution.
 
 The detector artifact is pinned as follows:
 
@@ -81,9 +80,9 @@ The detector artifact is pinned as follows:
 |---|---|
 | Hugging Face repository | [`morsetechlab/yolov11-license-plate-detection`](https://huggingface.co/morsetechlab/yolov11-license-plate-detection) |
 | Revision | `0f8dc03` |
-| Filename | `license-plate-finetune-v1l.onnx` |
-| SHA-256 | `5efdfbe4909bfa6c895bed48676b7de695bf71788932e095e7bc74b8b52b75d8` |
-| Default local path | `models/license-plate-finetune-v1l.onnx` |
+| Filename | `license-plate-finetune-v1l.pt` |
+| SHA-256 | `f3d25e066e4ff41c64c2bcbf4fd35fa85abaad5a37769b61c804de8f3291ff2c` |
+| Default local path | `models/license-plate-finetune-v1l.pt` |
 
 ## Usage
 
@@ -126,15 +125,16 @@ If `--output` is omitted, the application displays the annotated frames. Press `
 | Argument | Description | Default |
 |---|---|---|
 | `--source` | Required image path, video path, RTSP URL, or non-negative numeric webcam index. | None |
-| `--detector-model` | Local path for the pinned detector ONNX file. | `models/license-plate-finetune-v1l.onnx` |
+| `--detector-model` | Local path for the pinned detector PyTorch weight. | `models/license-plate-finetune-v1l.pt` |
 | `--ocr-model` | FastPlateOCR model name. | `cct-xs-v2-global-model` |
 | `--conf` | Minimum YOLO detection confidence, from `0` through `1`. | `0.35` |
 | `--imgsz` | Positive YOLO inference image size. | `640` |
 | `--device` | Detector device; indexed CUDA values are normalized to FastPlateOCR's accepted `cuda` value for OCR. | `cuda:0` |
 | `--output` | Optional annotated image or video output path. | None |
 | `--polygon` | Optional ROI points in `x1,y1;x2,y2;...` format; omitted for interactive selection. | None |
+| `--debug` | Print backend tracker IDs, resolved application IDs, OCR counts, and panel record counts. | Disabled |
 
-This MVP intentionally excludes tracking, counting, and temporal smoothing. A plate can therefore be reported independently on multiple frames, and readings are not stabilized across time.
+ByteTrack remains the primary identity source. When it returns no ID, the fallback associator prevents successful detections and OCR readings from being discarded before they reach the panel.
 
 ## Project structure
 
@@ -145,11 +145,12 @@ license-plate-ocr/
 ├── main.py                   # CLI and image/video/stream orchestration
 ├── assets/
 │   └── .gitkeep              # Reserved for a future real demo asset
-├── models/                   # Runtime detector cache; ONNX weights are ignored
+├── models/                   # Runtime detector cache; detector weights are ignored
 ├── src/
 │   ├── model_manager.py      # Download and SHA-256 verification
 │   ├── ocr.py                # FastPlateOCR adapter
 │   ├── pipeline.py           # Detection, crop, and OCR composition
+│   ├── plate_associator.py   # Stable application-level plate identities
 │   ├── plate_detector.py     # YOLO detector adapter
 │   ├── types.py              # Shared detection types
 │   └── visualization.py      # OpenCV annotations

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from math import isfinite
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from src.visualization import annotate_frame, compose_plate_panel
@@ -13,12 +14,13 @@ if TYPE_CHECKING:
     import numpy as np
 
     from src.pipeline import PlatePipeline
+    from src.plate_associator import PlateAssociator
 
 
 IMAGE_EXTENSIONS = frozenset(
     {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 )
-DEFAULT_DETECTOR_MODEL = "models/license-plate-finetune-v1l.onnx"
+DEFAULT_DETECTOR_MODEL = "models/license-plate-finetune-v1l.pt"
 DEFAULT_OCR_MODEL = "cct-xs-v2-global-model"
 DEFAULT_CONFIDENCE = 0.35
 DEFAULT_IMAGE_SIZE = 640
@@ -26,6 +28,34 @@ DEFAULT_DEVICE = "cuda:0"
 DEFAULT_OUTPUT_FPS = 25.0
 DEFAULT_DISPLAY_MAX_WIDTH = 1280
 Polygon = tuple[tuple[int, int], ...]
+
+
+class ProcessingFpsMeter:
+    """Smooth completed-frame throughput for a stable UI reading.
+
+    Args:
+        smoothing: Weight assigned to the newest instantaneous FPS value.
+    """
+
+    def __init__(self, smoothing: float = 0.2) -> None:
+        self.smoothing = smoothing
+        self.value: float | None = None
+
+    def observe(self, elapsed_seconds: float) -> float:
+        """Record one completed frame duration and return smoothed FPS.
+
+        Args:
+            elapsed_seconds: End-to-end processing duration for one frame.
+
+        Returns:
+            The exponentially smoothed processing rate in frames per second.
+        """
+        instantaneous_fps = 1.0 / elapsed_seconds
+        if self.value is None:
+            self.value = instantaneous_fps
+        else:
+            self.value += self.smoothing * (instantaneous_fps - self.value)
+        return self.value
 
 
 def parse_source(source: str) -> str | int:
@@ -53,7 +83,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--detector-model",
         default=DEFAULT_DETECTOR_MODEL,
-        help="Local path for the pinned detector ONNX model",
+        help="Local path for the pinned detector PyTorch model",
     )
     parser.add_argument(
         "--ocr-model",
@@ -64,6 +94,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--imgsz", type=_positive_int_type, default=DEFAULT_IMAGE_SIZE)
     parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--output", help="Optional annotated image/video output path")
+    parser.add_argument("--debug", action="store_true", help="Print tracker, OCR, and panel diagnostics")
     parser.add_argument(
         "--polygon",
         type=parse_polygon,
@@ -160,6 +191,17 @@ def filter_results_by_polygon(results: list[Any], polygon: Polygon | None) -> li
     return filtered
 
 
+def _associate_results(
+    frame: np.ndarray,
+    results: list[Any],
+    associator: PlateAssociator,
+    consensus: Any,
+) -> tuple[list[Any], list[Any]]:
+    """Resolve application IDs before updating persistent panel records."""
+    resolved_results = associator.update(results)
+    return resolved_results, consensus.update(frame, resolved_results)
+
+
 def run(args: argparse.Namespace) -> None:
     """Run the detector/OCR pipeline for an image or frame stream.
 
@@ -178,6 +220,7 @@ def run(args: argparse.Namespace) -> None:
         from src.model_manager import ensure_detector_model
         from src.ocr import PlateOCR
         from src.pipeline import PlatePipeline
+        from src.plate_associator import PlateAssociator
         from src.plate_detector import PlateDetector
         from src.track_consensus import TrackConsensusStore
 
@@ -187,13 +230,24 @@ def run(args: argparse.Namespace) -> None:
             confidence=args.conf,
             image_size=args.imgsz,
             device=args.device,
+            debug=args.debug,
         )
         ocr = PlateOCR(model_name=args.ocr_model, device=args.device)
-        pipeline = PlatePipeline(detector, ocr)
+        pipeline = PlatePipeline(detector, ocr, debug=args.debug)
+        associator = PlateAssociator()
         consensus = TrackConsensusStore(max_records=5)
 
         if is_image_source(source):
-            _run_image(cv2, pipeline, source, args.output, args.polygon, consensus)
+            _run_image(
+                cv2,
+                pipeline,
+                source,
+                args.output,
+                args.polygon,
+                associator,
+                consensus,
+                args.debug,
+            )
             return
 
         capture = cv2.VideoCapture(source)
@@ -206,12 +260,31 @@ def run(args: argparse.Namespace) -> None:
             raise RuntimeError(f"Could not read first frame from source: {source}")
         polygon = args.polygon or select_polygon(cv2, frame)
         display = args.output is None
+        fps_meter = ProcessingFpsMeter()
+        processing_fps: float | None = None
         while True:
-            results = filter_results_by_polygon(pipeline.process_frame(frame), polygon)
-            records = consensus.update(frame, results)
+            frame_started_at = perf_counter()
+            observations = filter_results_by_polygon(pipeline.process_frame(frame), polygon)
+            backend_ids = sum(item.track_id is not None for item in observations)
+            results, records = _associate_results(
+                frame, observations, associator, consensus
+            )
+            if args.debug:
+                print(
+                    f"[debug] results={len(results)} backend_ids={backend_ids} "
+                    f"resolved_ids={sum(item.track_id is not None for item in results)} "
+                    f"records={len(records)}"
+                )
             consensus_text = {record.track_id: record.text for record in records}
             annotated_scene = annotate_frame(frame.copy(), results, polygon, consensus_text)
-            annotated = compose_plate_panel(frame, records, scene=annotated_scene)
+            annotated = compose_plate_panel(
+                frame,
+                records,
+                scene=annotated_scene,
+                processing_fps=processing_fps,
+                source_fps=fps,
+            )
+            processing_fps = fps_meter.observe(perf_counter() - frame_started_at)
             if writer is None and args.output is not None:
                 writer = _create_writer(cv2, args.output, fps, annotated)
             if writer is not None:
@@ -237,15 +310,28 @@ def _run_image(
     source: str,
     output: str | None,
     polygon: Polygon | None,
+    associator: PlateAssociator,
     consensus: Any,
+    debug: bool,
 ) -> None:
     """Process and optionally save one still image."""
     frame = cv2.imread(source)
     if frame is None:
         raise RuntimeError(f"Could not read image source: {source}")
     selected_polygon = polygon or select_polygon(cv2, frame)
-    results = filter_results_by_polygon(pipeline.process_frame(frame), selected_polygon)
-    records = consensus.update(frame, results)
+    observations = filter_results_by_polygon(
+        pipeline.process_frame(frame), selected_polygon
+    )
+    backend_ids = sum(item.track_id is not None for item in observations)
+    results, records = _associate_results(
+        frame, observations, associator, consensus
+    )
+    if debug:
+        print(
+            f"[debug] results={len(results)} backend_ids={backend_ids} "
+            f"resolved_ids={sum(item.track_id is not None for item in results)} "
+            f"records={len(records)}"
+        )
     consensus_text = {record.track_id: record.text for record in records}
     annotated_scene = annotate_frame(frame.copy(), results, selected_polygon, consensus_text)
     annotated = compose_plate_panel(frame, records, scene=annotated_scene)

@@ -100,6 +100,7 @@ class PlatePipeline:
         detector: PlateDetector,
         ocr: PlateOCR,
         padding_ratio: float = 0.08,
+        debug: bool = False,
     ) -> None:
         """Initialize a pipeline with detector and OCR collaborators.
 
@@ -111,6 +112,7 @@ class PlatePipeline:
         self._detector = detector
         self._ocr = ocr
         self._padding_ratio = padding_ratio
+        self._debug = debug
 
     def process_frame(self, frame: np.ndarray) -> list[PlateResult]:
         """Detect and recognize all valid plates in one frame.
@@ -126,6 +128,8 @@ class PlatePipeline:
                 valid crops.
         """
         detections = self._detector.track(frame)
+        if self._debug:
+            print(f"[debug] tracker detections={len(detections)} ids={sum(item.track_id is not None for item in detections)}")
         if not detections:
             return []
 
@@ -139,9 +143,13 @@ class PlatePipeline:
             crops.append(crop)
 
         if not crops:
+            if self._debug:
+                print("[debug] valid crops=0")
             return []
 
         readings = self._ocr.recognize_batch(crops)
+        if self._debug:
+            print(f"[debug] valid crops={len(crops)} ocr readings={len(readings)} nonempty={sum(bool(reading.text) for reading in readings)}")
         if len(readings) != len(valid_detections):
             raise ValueError(
                 "OCR returned "

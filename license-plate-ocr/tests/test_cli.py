@@ -38,13 +38,20 @@ def test_parse_args_exposes_documented_defaults() -> None:
     args = parse_args(["--source", "0"])
 
     assert args.source == 0
-    assert args.detector_model == "models/license-plate-finetune-v1l.onnx"
+    assert args.detector_model == "models/license-plate-finetune-v1l.pt"
     assert args.ocr_model == "cct-xs-v2-global-model"
     assert args.conf == 0.35
     assert args.imgsz == 640
     assert args.device == "cuda:0"
     assert args.output is None
     assert args.polygon is None
+    assert args.debug is False
+
+
+def test_parse_args_enables_debug_diagnostics() -> None:
+    from main import parse_args
+
+    assert parse_args(["--source", "0", "--debug"]).debug is True
 
 
 def test_parse_polygon_accepts_integer_points() -> None:
@@ -149,6 +156,16 @@ def test_invalid_capture_fps_uses_fallback_but_valid_fps_is_preserved() -> None:
     assert _valid_fps(0) == 25.0
     assert _valid_fps(float("nan")) == 25.0
     assert _valid_fps(float("inf")) == 25.0
+
+
+def test_processing_fps_meter_smooths_completed_frame_measurements() -> None:
+    """Catch regressions that expose noisy instantaneous frame rates."""
+    from main import ProcessingFpsMeter
+
+    meter = ProcessingFpsMeter(smoothing=0.2)
+
+    assert meter.observe(0.1) == 10.0
+    assert meter.observe(0.05) == 12.0
 
 
 def test_resize_for_display_scales_only_wide_frames_with_preserved_aspect_ratio() -> None:
@@ -454,6 +471,57 @@ def test_compose_plate_panel_renders_empty_state() -> None:
     assert "No plates detected" in calls
 
 
+def test_compose_plate_panel_shows_processing_and_source_fps() -> None:
+    """Catch regressions that hide either runtime speed indicator."""
+    import sys
+
+    from src.visualization import compose_plate_panel
+
+    labels: list[str] = []
+
+    class FakeCV2:
+        FONT_HERSHEY_SIMPLEX = 7
+
+        @staticmethod
+        def putText(*args: object, **kwargs: object) -> None:
+            labels.append(str(args[1]))
+
+    class FakePanel:
+        shape = (140, 640, 3)
+        dtype = "uint8"
+
+        def __setitem__(self, key: object, value: object) -> None:
+            pass
+
+    frame = SimpleNamespace(shape=(360, 640, 3), dtype="uint8")
+    previous_cv2 = sys.modules.get("cv2")
+    previous_numpy = sys.modules.get("numpy")
+    sys.modules["cv2"] = FakeCV2
+    sys.modules["numpy"] = SimpleNamespace(
+        zeros=lambda shape, dtype: FakePanel(),
+        vstack=lambda values: SimpleNamespace(shape=(500, 640, 3)),
+    )
+    try:
+        compose_plate_panel(
+            frame,
+            [],
+            panel_height=140,
+            processing_fps=12.345,
+            source_fps=25.0,
+        )
+    finally:
+        if previous_cv2 is None:
+            sys.modules.pop("cv2", None)
+        else:
+            sys.modules["cv2"] = previous_cv2
+        if previous_numpy is None:
+            sys.modules.pop("numpy", None)
+        else:
+            sys.modules["numpy"] = previous_numpy
+
+    assert "PROCESS 12.3 FPS | SOURCE 25.0 FPS" in labels
+
+
 def test_compose_plate_panel_skips_invalid_boxes_and_labels_valid_plate() -> None:
     import sys
 
@@ -590,3 +658,152 @@ def test_compose_plate_panel_shows_header_and_overflow_count() -> None:
 
     assert "RECENT DETECTIONS" in labels
     assert "+2 more" in labels
+
+
+def _render_five_card_panel_layout() -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    import sys
+
+    from src.visualization import compose_plate_panel
+
+    card_origins: list[tuple[int, int]] = []
+    resize_sizes: list[tuple[int, int]] = []
+
+    class FakeArray:
+        def __init__(self, shape: tuple[int, int, int]) -> None:
+            self.shape = shape
+            self.dtype = "uint8"
+            self.size = shape[0] * shape[1] * shape[2]
+
+        def __getitem__(self, key: object) -> "FakeArray":
+            return self
+
+        def __setitem__(self, key: object, value: object) -> None:
+            pass
+
+    class FakeCV2:
+        FONT_HERSHEY_SIMPLEX = 7
+        INTER_AREA = 3
+
+        @staticmethod
+        def putText(*args: object, **kwargs: object) -> None:
+            pass
+
+        @staticmethod
+        def rectangle(
+            _image: object,
+            start: tuple[int, int],
+            _end: tuple[int, int],
+            _color: tuple[int, int, int],
+            _thickness: int,
+        ) -> None:
+            card_origins.append(start)
+
+        @staticmethod
+        def resize(
+            _crop: FakeArray,
+            size: tuple[int, int],
+            **_kwargs: object,
+        ) -> FakeArray:
+            resize_sizes.append(size)
+            return FakeArray((size[1], size[0], 3))
+
+    class FakeNumpy:
+        @staticmethod
+        def zeros(shape: tuple[int, int, int], dtype: object) -> FakeArray:
+            return FakeArray(shape)
+
+        @staticmethod
+        def vstack(values: tuple[FakeArray, FakeArray]) -> FakeArray:
+            return FakeArray((sum(value.shape[0] for value in values), values[0].shape[1], 3))
+
+    results = [
+        SimpleNamespace(
+            crop=FakeArray((40, 120, 3)),
+            detection_confidence=0.9,
+            consensus_confidence=0.8,
+            text=f"34ABC{index}",
+            track_id=index,
+        )
+        for index in range(5)
+    ]
+    previous_cv2 = sys.modules.get("cv2")
+    previous_numpy = sys.modules.get("numpy")
+    sys.modules["cv2"] = FakeCV2
+    sys.modules["numpy"] = FakeNumpy
+    try:
+        compose_plate_panel(FakeArray((1440, 2560, 3)), results)
+    finally:
+        if previous_cv2 is None:
+            sys.modules.pop("cv2", None)
+        else:
+            sys.modules["cv2"] = previous_cv2
+        if previous_numpy is None:
+            sys.modules.pop("numpy", None)
+        else:
+            sys.modules["numpy"] = previous_numpy
+    return card_origins, resize_sizes
+
+
+def test_compose_plate_panel_places_five_cards_in_one_row() -> None:
+    card_origins, _resize_sizes = _render_five_card_panel_layout()
+
+    assert len(card_origins) == 5
+    assert len({y for _x, y in card_origins}) == 1
+
+
+def test_compose_plate_panel_uses_wide_plate_thumbnails() -> None:
+    _card_origins, resize_sizes = _render_five_card_panel_layout()
+
+    assert len(resize_sizes) == 5
+    assert min(width for width, _height in resize_sizes) >= 200
+
+
+def test_compose_plate_panel_renders_tracked_record_without_ocr_confidence() -> None:
+    import numpy as np
+
+    from src.track_consensus import TrackedPlateRecord
+    from src.visualization import compose_plate_panel
+
+    frame = np.zeros((100, 320, 3), dtype=np.uint8)
+    record = TrackedPlateRecord(
+        track_id=7,
+        text="34ABC123",
+        consensus_confidence=0.8,
+        detection_confidence=0.9,
+        crop=np.zeros((20, 80, 3), dtype=np.uint8),
+        last_seen_frame=1,
+    )
+
+    composed = compose_plate_panel(frame, [record])
+
+    assert composed.shape == (370, 320, 3)
+
+
+def test_associate_results_routes_untracked_ocr_observation_to_consensus() -> None:
+    import numpy as np
+
+    from main import _associate_results
+    from src.pipeline import PlateResult
+    from src.plate_associator import PlateAssociator
+    from src.track_consensus import TrackConsensusStore
+
+    frame = np.zeros((100, 200, 3), dtype=np.uint8)
+    observation = PlateResult(
+        bbox=(20, 30, 120, 60),
+        detection_confidence=0.9,
+        text="34ABC123",
+        ocr_confidence=0.95,
+        region=None,
+        track_id=None,
+    )
+
+    resolved, records = _associate_results(
+        frame,
+        [observation],
+        PlateAssociator(),
+        TrackConsensusStore(max_records=5),
+    )
+
+    assert resolved[0].track_id == 1
+    assert records[0].track_id == 1
+    assert records[0].text == "34ABC123"

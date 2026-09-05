@@ -14,9 +14,9 @@ from huggingface_hub import hf_hub_download
 
 
 MODEL_REPO = "morsetechlab/yolov11-license-plate-detection"
-MODEL_FILENAME = "license-plate-finetune-v1l.onnx"
+MODEL_FILENAME = "license-plate-finetune-v1l.pt"
 MODEL_REVISION = "0f8dc03"
-MODEL_SHA256 = "5efdfbe4909bfa6c895bed48676b7de695bf71788932e095e7bc74b8b52b75d8"
+MODEL_SHA256 = "f3d25e066e4ff41c64c2bcbf4fd35fa85abaad5a37769b61c804de8f3291ff2c"
 
 
 def _calculate_sha256(model_path: Path) -> str:
@@ -40,7 +40,7 @@ def ensure_detector_model(model_path: Path) -> Path:
     """Download the pinned Hugging Face model if absent and verify SHA-256.
 
     Args:
-        model_path: Local path where the detector ONNX file must be available.
+        model_path: Local path where the detector PyTorch weight must be available.
 
     Returns:
         The validated ``model_path``.

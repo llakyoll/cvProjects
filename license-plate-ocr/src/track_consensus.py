@@ -38,21 +38,30 @@ class TrackConsensusStore:
         """Add one frame's tracked OCR readings and return current records."""
         self._frame_index += 1
         for result in results:
-            if result.track_id is None or not result.text:
-                continue
+            if result.track_id is None:
+                raise ValueError("consensus requires an application-level track ID")
             crop = _crop(frame, result.bbox)
             if crop is None:
                 continue
             weight = max(0.0, (result.ocr_confidence or 0.0) * result.detection_confidence)
             state = self._states.setdefault(
                 result.track_id,
-                {"votes": defaultdict(float), "best": {}, "detection": 0.0},
+                {
+                    "votes": defaultdict(float),
+                    "best": {},
+                    "fallback_crop": crop,
+                    "detection": 0.0,
+                    "last_seen_frame": self._frame_index,
+                },
             )
-            state["votes"][result.text] += weight
-            previous = state["best"].get(result.text)
-            if previous is None or weight > previous[0]:
-                state["best"][result.text] = (weight, crop)
+            state["fallback_crop"] = crop
+            if result.text:
+                state["votes"][result.text] += weight
+                previous = state["best"].get(result.text)
+                if previous is None or weight > previous[0]:
+                    state["best"][result.text] = (weight, crop)
             state["detection"] = result.detection_confidence
+            state["last_seen_frame"] = self._frame_index
             if result.track_id in self._order:
                 self._order.remove(result.track_id)
             self._order.insert(0, result.track_id)
@@ -65,13 +74,19 @@ class TrackConsensusStore:
         records = []
         for track_id in self._order:
             state = self._states[track_id]
-            text = max(state["votes"], key=state["votes"].get)
-            total = sum(state["votes"].values())
-            best_weight, crop = state["best"][text]
+            if state["votes"]:
+                text = max(state["votes"], key=state["votes"].get)
+                total = sum(state["votes"].values())
+                _, crop = state["best"][text]
+                confidence = state["votes"][text] / total if total else 0.0
+            else:
+                text = "READING..."
+                crop = state["fallback_crop"]
+                confidence = 0.0
             records.append(
                 TrackedPlateRecord(
-                    track_id, text, state["votes"][text] / total if total else 0.0,
-                    state["detection"], crop, self._frame_index,
+                    track_id, text, confidence,
+                    state["detection"], crop, state["last_seen_frame"],
                 )
             )
         return records

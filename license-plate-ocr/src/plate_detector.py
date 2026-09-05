@@ -30,6 +30,7 @@ class PlateDetector:
         image_size: int = 640,
         device: str = "cuda:0",
         model: object | None = None,
+        debug: bool = False,
     ) -> None:
         """Initialize the detector backend and inference settings.
 
@@ -47,6 +48,7 @@ class PlateDetector:
         self._confidence = confidence
         self._image_size = image_size
         self._device = device
+        self._debug = debug
 
         if model is not None:
             self._model = model
@@ -105,6 +107,10 @@ class PlateDetector:
         coordinates = getattr(boxes, "xyxy", [])
         confidences = getattr(boxes, "conf", [])
         identifiers = getattr(boxes, "id", None)
+        if self._debug and include_track_ids:
+            raw_confidences = [round(float(value), 4) for value in confidences]
+            raw_ids = None if identifiers is None else [int(value) for value in identifiers]
+            print(f"[debug] tracker raw confidences={raw_confidences} raw ids={raw_ids}")
         detections: list[PlateDetection] = []
         for index, (box, confidence) in enumerate(zip(coordinates, confidences)):
             score = float(confidence)

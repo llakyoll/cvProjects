@@ -82,6 +82,8 @@ def compose_plate_panel(
     results: list[PlateResult],
     panel_height: int = DEFAULT_PANEL_HEIGHT,
     scene: np.ndarray | None = None,
+    processing_fps: float | None = None,
+    source_fps: float | None = None,
 ) -> np.ndarray:
     """Add a fixed-height plate crop and OCR summary panel above a frame.
 
@@ -91,6 +93,8 @@ def compose_plate_panel(
         panel_height: Height in pixels reserved above the scene.
         scene: Optional annotated scene to place below the panel. When omitted,
             ``frame`` is used.
+        processing_fps: Smoothed completed-frame processing rate, if available.
+        source_fps: FPS reported by the video or camera source, if available.
 
     Returns:
         A new image with the panel above the unchanged scene. Invalid boxes
@@ -116,6 +120,7 @@ def compose_plate_panel(
     panel = np.zeros((panel_height, width, channels), dtype=frame.dtype)
     if hasattr(panel, "__setitem__"):
         panel[:] = PANEL_BACKGROUND
+    _draw_panel_header(cv2, panel, width, processing_fps, source_fps)
     valid_results = []
     for result in results:
         crop = getattr(result, "crop", None)
@@ -125,16 +130,6 @@ def compose_plate_panel(
             valid_results.append((result, crop))
 
     if not valid_results:
-        cv2.putText(
-            panel,
-            "RECENT DETECTIONS",
-            (PANEL_MARGIN, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            PANEL_ACCENT,
-            1,
-            getattr(cv2, "LINE_AA", 16),
-        )
         cv2.putText(
             panel,
             "No plates detected",
@@ -147,27 +142,16 @@ def compose_plate_panel(
         )
     else:
         visible_results = valid_results[:5]
-        columns = min(3, len(visible_results))
-        rows = (len(visible_results) + columns - 1) // columns
+        columns = 5
         card_width = max(
             1,
             (width - 2 * PANEL_MARGIN - PANEL_CARD_GAP * (columns - 1)) // columns,
         )
         card_height = max(
             1,
-            (panel_height - PANEL_HEADER_HEIGHT - PANEL_MARGIN - PANEL_CARD_GAP * (rows - 1)) // rows,
+            panel_height - PANEL_HEADER_HEIGHT - PANEL_MARGIN,
         )
         draw_rectangle = getattr(cv2, "rectangle", None)
-        cv2.putText(
-            panel,
-            "RECENT DETECTIONS",
-            (PANEL_MARGIN, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            PANEL_ACCENT,
-            1,
-            getattr(cv2, "LINE_AA", 16),
-        )
         hidden_count = len(valid_results) - len(visible_results)
         if hidden_count:
             cv2.putText(
@@ -180,11 +164,10 @@ def compose_plate_panel(
                 1,
                 getattr(cv2, "LINE_AA", 16),
             )
-        thumbnail_height = max(1, card_height - 2 * PANEL_MARGIN)
         for index, (result, crop) in enumerate(visible_results, start=1):
             card_index = index - 1
-            x = PANEL_MARGIN + (card_index % columns) * (card_width + PANEL_CARD_GAP)
-            y = PANEL_HEADER_HEIGHT + (card_index // columns) * (card_height + PANEL_CARD_GAP)
+            x = PANEL_MARGIN + card_index * (card_width + PANEL_CARD_GAP)
+            y = PANEL_HEADER_HEIGHT
             if draw_rectangle is not None:
                 draw_rectangle(
                     panel,
@@ -193,60 +176,89 @@ def compose_plate_panel(
                     PANEL_CARD_BACKGROUND,
                     -1,
                 )
-            thumbnail_width = min(max(1, card_width // 2), 112)
-            thumbnail = _fit_thumbnail(cv2, crop, thumbnail_width, thumbnail_height)
-            thumbnail_y = y + (card_height - thumbnail.shape[0]) // 2
+            thumbnail_width = max(1, card_width - 2 * PANEL_MARGIN)
+            thumbnail_height = max(1, card_height - 76)
+            thumbnail = _fit_thumbnail(
+                cv2, crop, thumbnail_width, thumbnail_height
+            )
+            thumbnail_x = x + (card_width - thumbnail.shape[1]) // 2
+            thumbnail_y = y + PANEL_MARGIN
             panel[
                 thumbnail_y : thumbnail_y + thumbnail.shape[0],
-                x + PANEL_MARGIN : x + PANEL_MARGIN + thumbnail.shape[1],
+                thumbnail_x : thumbnail_x + thumbnail.shape[1],
             ] = thumbnail
             text = result.text or "UNKNOWN"
-            confidence = getattr(result, "consensus_confidence", result.ocr_confidence)
+            confidence = getattr(result, "consensus_confidence", None)
+            if confidence is None:
+                confidence = getattr(result, "ocr_confidence", None)
             ocr = "n/a" if confidence is None else f"{confidence:.0%}"
-            text_x = x + PANEL_MARGIN + thumbnail_width + 8
+            text_x = x + PANEL_MARGIN
             track_id = getattr(result, "track_id", None)
             cv2.putText(
                 panel,
-                f"Track #{track_id if track_id is not None else index}",
-                (text_x, y + 20),
+                text,
+                (text_x, y + card_height - 42),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 255),
+                2,
+                getattr(cv2, "LINE_AA", 16),
+            )
+            cv2.putText(
+                panel,
+                f"T#{track_id if track_id is not None else index}  OCR {ocr}  "
+                f"DET {result.detection_confidence:.0%}",
+                (text_x, y + card_height - 16),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 PANEL_ACCENT,
                 1,
                 getattr(cv2, "LINE_AA", 16),
             )
-            cv2.putText(
-                panel,
-                text,
-                (text_x, y + 44),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.62,
-                (255, 255, 255),
-                1,
-                getattr(cv2, "LINE_AA", 16),
-            )
-            cv2.putText(
-                panel,
-                f"OCR {ocr}",
-                (text_x, y + 66),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (190, 230, 190),
-                1,
-                getattr(cv2, "LINE_AA", 16),
-            )
-            cv2.putText(
-                panel,
-                f"DET {result.detection_confidence:.0%}",
-                (text_x, y + 88),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (210, 210, 210),
-                1,
-                getattr(cv2, "LINE_AA", 16),
-            )
 
     return np.vstack((panel, frame if scene is None else scene))
+
+
+def _draw_panel_header(
+    cv2: Any,
+    panel: np.ndarray,
+    width: int,
+    processing_fps: float | None,
+    source_fps: float | None,
+) -> None:
+    """Draw the panel title and optional throughput indicators."""
+    cv2.putText(
+        panel,
+        "RECENT DETECTIONS",
+        (PANEL_MARGIN, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        PANEL_ACCENT,
+        1,
+        getattr(cv2, "LINE_AA", 16),
+    )
+    if processing_fps is None and source_fps is None:
+        return
+    process_label = "--.-" if processing_fps is None else f"{processing_fps:.1f}"
+    source_label = "--.-" if source_fps is None else f"{source_fps:.1f}"
+    metrics = f"PROCESS {process_label} FPS | SOURCE {source_label} FPS"
+    get_text_size = getattr(cv2, "getTextSize", None)
+    if get_text_size is None:
+        text_width = len(metrics) * 8
+    else:
+        text_width = get_text_size(
+            metrics, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+        )[0][0]
+    cv2.putText(
+        panel,
+        metrics,
+        (max(PANEL_MARGIN, width - PANEL_MARGIN - text_width), 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (220, 220, 220),
+        1,
+        getattr(cv2, "LINE_AA", 16),
+    )
 
 
 def _safe_crop(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray | None:
