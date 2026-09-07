@@ -13,6 +13,9 @@ yolov8*.pt
 yolov5*.pt
 yolo11*.pt
 
+# Local entrance-line calibration (created at runtime)
+restroom-usage-alert/line_config.json
+
 # OS
 .DS_Store
 Thumbs.db
