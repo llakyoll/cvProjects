@@ -5,6 +5,10 @@ terminal alarm when the configured total reaches a threshold. It uses only
 short-lived tracker IDs needed to prevent duplicate counts; it does not perform
 face recognition or save identities.
 
+## Demo
+
+[▶ Watch the annotated demo video](assets/demo.mp4)
+
 ## Workflow
 
 ```mermaid
@@ -73,6 +77,10 @@ available in the local OpenCV/FFmpeg installation. For example:
 ```bash
 python main.py --source assets/entrance.avi --threshold 10
 ```
+
+Annotated output is saved with `--output assets/demo.mp4`. If OpenCV cannot
+open an MP4 encoder, the application automatically uses the system `ffmpeg`
+binary to produce an H.264 MP4.
 
 ### AVI troubleshooting
 

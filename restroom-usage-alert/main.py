@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 import json
 from pathlib import Path
+import subprocess
 
 import cv2
 
@@ -56,6 +57,46 @@ def open_video(source):
         "For AVI files, use a valid video stream such as H.264/MJPEG. "
         "H.265 streams in AVI containers are often unsupported; re-encode them to H.264 MP4."
     )
+
+
+class FFmpegVideoWriter:
+    """Write BGR frames as an H.264 MP4 through the system FFmpeg binary."""
+
+    def __init__(self, output_path: str, fps: float, frame_size: tuple[int, int]):
+        width, height = frame_size
+        self.process = subprocess.Popen(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "rawvideo", "-pixel_format", "bgr24",
+                "-video_size", f"{width}x{height}", "-framerate", str(fps),
+                "-i", "-", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", output_path,
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def write(self, frame) -> None:
+        if self.process.stdin is None:
+            raise RuntimeError("FFmpeg video writer is unavailable.")
+        self.process.stdin.write(frame.tobytes())
+
+    def release(self) -> None:
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+        error_output = self.process.stderr.read().decode("utf-8", errors="replace") if self.process.stderr else ""
+        if self.process.wait() != 0:
+            raise RuntimeError(f"FFmpeg could not write the output video: {error_output.strip()}")
+
+
+def create_video_writer(output_path: str, fps: float, frame_size: tuple[int, int]):
+    """Prefer OpenCV output, then fall back to FFmpeg when its MP4 encoder is absent."""
+    writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, frame_size)
+    if writer.isOpened():
+        return writer
+    writer.release()
+    print("OpenCV MP4 writer is unavailable; using FFmpeg H.264 output.")
+    return FFmpegVideoWriter(output_path, fps, frame_size)
 
 
 def configure_window(window_name: str, windowed: bool) -> None:
@@ -239,7 +280,7 @@ def main() -> None:
             if writer is None:
                 height, width = annotated.shape[:2]
                 fps = capture.get(cv2.CAP_PROP_FPS) or 25
-                writer = cv2.VideoWriter(args.output, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+                writer = create_video_writer(args.output, fps, (width, height))
             writer.write(annotated)
         else:
             cv2.imshow(display_window, annotated)
