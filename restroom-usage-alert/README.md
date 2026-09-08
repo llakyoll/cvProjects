@@ -7,6 +7,8 @@ face recognition or save identities.
 
 ## Demo
 
+![Annotated entrance monitoring demo](assets/output.gif)
+
 [▶ Watch the annotated demo video](assets/demo.mp4)
 
 ## Workflow
