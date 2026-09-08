@@ -16,10 +16,14 @@ yolo11*.pt
 
 # License plate OCR detector weights (downloaded and hash-verified at runtime)
 license-plate-ocr/models/*.onnx
+license-plate-ocr/models/*.pt
 
 # Local license plate OCR inputs and generated annotations
 license-plate-ocr/test_video.mp4
 license-plate-ocr/assets/*_annotated.mp4
+
+# Local entrance-line calibration (created at runtime)
+restroom-usage-alert/line_config.json
 
 # OS
 .DS_Store
