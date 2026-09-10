@@ -159,9 +159,11 @@ To process and record a video without opening an OpenCV window, add
 
 ```bash
 python count_people.py --camera turnstile-b \
-  --save-video outputs/turnstile-b-counted.mp4 \
+  --save-video \
   --no-display
 ```
+
+With no path after `--save-video`, a timestamped MP4 is written to `outputs/`.
 
 The counter raises a terminal and on-screen **CROWD ALARM** when a frame has
 more than 10 detected people. Change the limit (or set it to `0` to disable

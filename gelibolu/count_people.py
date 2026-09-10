@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -36,8 +38,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save-video",
         type=Path,
+        nargs="?",
+        const=Path("outputs"),
         default=None,
-        help="Optional annotated output path (.mp4 or .avi). The preview, ROIs, gates, and count panel are recorded.",
+        help="Record the annotated output. Optionally provide a .mp4/.avi path; without one, a timestamped MP4 is saved in outputs/.",
     )
     return parser.parse_args()
 
@@ -53,20 +57,106 @@ def display_gise_id(identifier: str) -> str:
     return identifier.replace("lane-", "GISE-").upper()
 
 
-def create_video_writer(output_path: Path, frame, fps: float) -> cv2.VideoWriter:
-    """Create an output writer matched to the annotated frame dimensions."""
+class FFmpegVideoWriter:
+    """Stream BGR OpenCV frames to FFmpeg for reliable MP4 or AVI output."""
+
+    def __init__(self, output_path: Path, frame, fps: float) -> None:
+        """Start an FFmpeg encoder matching the annotated frame dimensions.
+
+        Args:
+            output_path: Destination video path ending in `.mp4` or `.avi`.
+            frame: First annotated BGR frame, used to obtain dimensions.
+            fps: Output frame rate.
+
+        Raises:
+            RuntimeError: If FFmpeg is not installed or cannot start.
+        """
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("FFmpeg is required for video recording but was not found in PATH.")
+
+        height, width = frame.shape[:2]
+        self.output_path = output_path
+        self.process = subprocess.Popen(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{width}x{height}",
+                "-r",
+                f"{fps:.6f}",
+                "-i",
+                "-",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(output_path),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if self.process.stdin is None:
+            raise RuntimeError(f"Could not start FFmpeg output process for: {output_path}")
+
+    def write(self, frame) -> None:
+        """Write one BGR frame to the running FFmpeg process."""
+        try:
+            self.process.stdin.write(frame.tobytes())
+        except BrokenPipeError as error:
+            raise RuntimeError(f"FFmpeg stopped while recording: {self.output_path}") from error
+
+    def release(self) -> None:
+        """Finish encoding and verify that FFmpeg completed successfully."""
+        self.process.stdin.close()
+        return_code = self.process.wait()
+        if return_code != 0:
+            raise RuntimeError(f"FFmpeg could not finalize output video: {self.output_path}")
+
+
+def create_video_writer(output_path: Path, frame, fps: float) -> FFmpegVideoWriter:
+    """Create an FFmpeg output writer matched to the annotated frame dimensions."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     extension = output_path.suffix.lower()
     if extension not in {".mp4", ".avi"}:
         raise ValueError("--save-video must end with .mp4 or .avi")
 
-    codec = "mp4v" if extension == ".mp4" else "MJPG"
-    height, width = frame.shape[:2]
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*codec), fps, (width, height))
-    if not writer.isOpened():
-        raise RuntimeError(f"Could not create output video: {output_path}")
-    print(f"Recording annotated output to: {output_path} ({fps:.2f} FPS, {codec})")
+    writer = FFmpegVideoWriter(output_path, frame, fps)
+    print(f"Recording annotated output to: {output_path} ({fps:.2f} FPS, FFmpeg/libx264)")
     return writer
+
+
+def resolve_output_path(output_path: Path | None, camera_name: str) -> Path | None:
+    """Resolve the optional recording flag to a concrete video path.
+
+    Args:
+        output_path: Explicit output path or the `outputs` sentinel from a bare
+            `--save-video` flag.
+        camera_name: Camera configuration name used in auto-generated files.
+
+    Returns:
+        A concrete output path, or None when recording is disabled.
+
+    Raises:
+        ValueError: If an explicit path has no supported video extension.
+    """
+    if output_path is None:
+        return None
+    if output_path == Path("outputs"):
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return output_path / f"{camera_name}-counted-{timestamp}.mp4"
+    if output_path.suffix.lower() not in {".mp4", ".avi"}:
+        raise ValueError("--save-video path must end with .mp4 or .avi")
+    return output_path
 
 
 def draw_crowd_alarm(frame, detected_people: int, threshold: int) -> None:
@@ -153,7 +243,8 @@ def main() -> None:
     args = parse_args()
     if args.crowd_threshold < 0:
         raise ValueError("--crowd-threshold cannot be negative.")
-    if args.no_display and args.save_video is None:
+    output_path = resolve_output_path(args.save_video, args.camera)
+    if args.no_display and output_path is None:
         raise ValueError("--no-display requires --save-video so the background run produces an output video.")
     camera = load_camera_config(args.config, args.camera)
     validate_lane_config(camera["lanes"])
@@ -204,9 +295,9 @@ def main() -> None:
         draw_count_panel(annotated, counter, camera["lanes"])
         if crowd_alarm_active:
             draw_crowd_alarm(annotated, detected_people, args.crowd_threshold)
-        if args.save_video is not None:
+        if output_path is not None:
             if output_writer is None:
-                output_writer = create_video_writer(args.save_video, annotated, output_fps)
+                output_writer = create_video_writer(output_path, annotated, output_fps)
             output_writer.write(annotated)
         if not args.no_display:
             cv2.imshow(window_name, annotated)
