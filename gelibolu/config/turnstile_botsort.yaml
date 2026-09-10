@@ -1,0 +1,23 @@
+# BoT-SORT tuning for fixed turnstile cameras with adjacent, partly occluded lanes.
+tracker_type: botsort
+
+# A lower detector threshold feeds weak-but-useful detections to the second
+# association stage, while new IDs still require a more confident detection.
+track_high_thresh: 0.25
+track_low_thresh: 0.10
+new_track_thresh: 0.35
+
+# Keep an identity through about three seconds of a 25 FPS occlusion.
+track_buffer: 75
+match_thresh: 0.80
+fuse_score: true
+
+# Cameras are fixed; global-motion compensation can introduce unnecessary
+# displacement when many people move through the frame.
+gmc_method: none
+
+# Use appearance matching to reduce ID swaps between neighbouring lanes.
+proximity_thresh: 0.50
+appearance_thresh: 0.75
+with_reid: true
+model: auto
